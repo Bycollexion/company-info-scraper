@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, render_template
+from flask_cors import CORS
 from bs4 import BeautifulSoup
 import requests
 import random
@@ -11,6 +12,7 @@ import concurrent.futures
 import threading
 
 app = Flask(__name__)
+CORS(app)
 
 # Thread-local storage for session
 thread_local = threading.local()
@@ -159,6 +161,11 @@ def search_single_company(company_name):
 
 # In-memory leaderboard
 leaderboard = []
+
+@app.errorhandler(Exception)
+def handle_error(error):
+    app.logger.error(f"An error occurred: {str(error)}")
+    return jsonify({"error": str(error)}), 500
 
 @app.route('/submit-score', methods=['POST'])
 def submit_score():
