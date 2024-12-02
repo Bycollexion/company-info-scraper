@@ -1,9 +1,27 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // Tab Switching Logic
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    const tabContents = document.querySelectorAll('.tab-content');
+
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            tabBtns.forEach(b => b.classList.remove('active', 'border-blue-500', 'text-blue-600'));
+            tabContents.forEach(c => c.classList.remove('active'));
+            
+            btn.classList.add('active', 'border-blue-500', 'text-blue-600');
+            document.getElementById(`${btn.dataset.tab}-content`).classList.add('active');
+        });
+    });
+
+    // Company Info Scraper Logic
     const companiesTextarea = document.getElementById('companies');
     const searchBtn = document.getElementById('searchBtn');
     const resultsDiv = document.getElementById('results');
     const loadingDiv = document.getElementById('loading');
     const progressDiv = document.createElement('div');
+    const resultsTable = document.getElementById('resultsTable');
+    const resultsTableBody = document.getElementById('resultsTableBody');
+
     progressDiv.className = 'text-center mb-4 hidden';
     loadingDiv.parentNode.insertBefore(progressDiv, loadingDiv.nextSibling);
 
@@ -18,70 +36,58 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
-    function createResultCard(result) {
-        const card = document.createElement('div');
-        card.className = 'bg-white rounded-lg shadow-lg p-6 mb-4 transform transition-all duration-300 hover:shadow-xl';
+    function createTableRow(result) {
+        const row = document.createElement('tr');
+        row.className = 'hover:bg-gray-50';
         
-        let content = `
-            <h2 class="text-xl font-bold mb-4 text-gray-800">${result.company_name}</h2>
-        `;
-
-        if (result.error) {
-            content += `
-                <div class="text-red-500 mb-2">Error: ${result.error}</div>
-            `;
+        // Company Name
+        const nameCell = document.createElement('td');
+        nameCell.className = 'px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900';
+        nameCell.textContent = result.company_name;
+        
+        // Employee Count
+        const countCell = document.createElement('td');
+        countCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500';
+        countCell.textContent = result.employee_count || 'Not found';
+        
+        // Website
+        const websiteCell = document.createElement('td');
+        websiteCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500';
+        if (result.company_website) {
+            const link = document.createElement('a');
+            link.href = result.company_website;
+            link.textContent = result.company_website;
+            link.className = 'text-blue-600 hover:text-blue-800';
+            link.target = '_blank';
+            websiteCell.appendChild(link);
         } else {
-            content += `
-                <div class="space-y-3">
-                    <div class="flex items-center">
-                        <span class="font-semibold text-gray-700 w-32">Employee Count:</span>
-                        <span class="text-gray-800">${result.employee_count || 'Not found'}</span>
-                    </div>
-            `;
-
-            if (result.company_website) {
-                content += `
-                    <div class="flex items-center">
-                        <span class="font-semibold text-gray-700 w-32">Website:</span>
-                        <a href="${result.company_website}" target="_blank" class="text-blue-500 hover:text-blue-700 truncate">${result.company_website}</a>
-                    </div>
-                `;
-            }
-
-            if (result.sources && result.sources.length > 0) {
-                content += `
-                    <div class="flex items-start">
-                        <span class="font-semibold text-gray-700 w-32">Sources:</span>
-                        <div class="flex flex-wrap gap-2">
-                            ${result.sources.map(source => 
-                                `<span class="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">${source}</span>`
-                            ).join('')}
-                        </div>
-                    </div>
-                `;
-            }
-
-            if (result.all_counts) {
-                content += `
-                    <div class="mt-4">
-                        <div class="font-semibold text-gray-700 mb-2">Detailed Counts:</div>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            ${Object.entries(result.all_counts).map(([source, count]) => `
-                                <div class="flex items-center justify-between bg-gray-50 p-2 rounded">
-                                    <span class="text-gray-600 capitalize">${source}:</span>
-                                    <span class="font-medium">${count}</span>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                `;
-            }
-
-            content += '</div>';
+            websiteCell.textContent = 'Not found';
         }
-
-        card.innerHTML = content;
-        return card;
+        
+        // Sources
+        const sourcesCell = document.createElement('td');
+        sourcesCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500';
+        if (result.sources && result.sources.length > 0) {
+            sourcesCell.innerHTML = result.sources.map(source => 
+                `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-1">
+                    ${source}
+                </span>`
+            ).join('');
+        }
+        
+        // Details
+        const detailsCell = document.createElement('td');
+        detailsCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-500';
+        if (result.all_counts) {
+            detailsCell.innerHTML = Object.entries(result.all_counts).map(([source, count]) =>
+                `<div class="text-xs">
+                    <span class="font-medium">${source}:</span> ${count}
+                </div>`
+            ).join('');
+        }
+        
+        row.append(nameCell, countCell, websiteCell, sourcesCell, detailsCell);
+        return row;
     }
 
     searchBtn.addEventListener('click', async () => {
@@ -95,11 +101,12 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Clear previous results
-        resultsDiv.innerHTML = '';
+        // Clear previous results and show loading
+        resultsTableBody.innerHTML = '';
         loadingDiv.classList.remove('hidden');
         progressDiv.classList.remove('hidden');
         searchBtn.disabled = true;
+        resultsTable.classList.remove('hidden');
 
         // Close any existing EventSource
         if (eventSource) {
@@ -110,7 +117,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const totalCompanies = companies.length;
 
         try {
-            // Create new EventSource for server-sent events
             eventSource = new EventSource('/search', {
                 headers: {
                     'Content-Type': 'application/json',
@@ -124,11 +130,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 processedCount++;
                 updateProgress(processedCount, totalCompanies);
                 
-                const card = createResultCard(result);
-                resultsDiv.appendChild(card);
+                const row = createTableRow(result);
+                resultsTableBody.appendChild(row);
                 
-                // Scroll the new card into view with smooth animation
-                card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
                 if (processedCount === totalCompanies) {
                     eventSource.close();
@@ -144,10 +149,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 searchBtn.disabled = false;
                 progressDiv.classList.add('hidden');
                 
-                resultsDiv.innerHTML = `
-                    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-                        An error occurred while fetching the results. Please try again.
-                    </div>
+                resultsTableBody.innerHTML = `
+                    <tr>
+                        <td colspan="5" class="px-6 py-4 text-center text-red-500">
+                            An error occurred while fetching the results. Please try again.
+                        </td>
+                    </tr>
                 `;
             };
 
@@ -157,11 +164,77 @@ document.addEventListener('DOMContentLoaded', () => {
             searchBtn.disabled = false;
             progressDiv.classList.add('hidden');
             
-            resultsDiv.innerHTML = `
-                <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
-                    An error occurred while fetching the results. Please try again.
-                </div>
+            resultsTableBody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="px-6 py-4 text-center text-red-500">
+                        An error occurred while fetching the results. Please try again.
+                    </td>
+                </tr>
             `;
+        }
+    });
+
+    // Number Guessing Game Logic
+    const guessInput = document.getElementById('guessInput');
+    const guessBtn = document.getElementById('guessBtn');
+    const newGameBtn = document.getElementById('newGameBtn');
+    const gameMessage = document.getElementById('gameMessage');
+    const guessList = document.getElementById('guessList');
+
+    let targetNumber = Math.floor(Math.random() * 100) + 1;
+    let guesses = [];
+
+    function updateGameMessage(message, type) {
+        gameMessage.className = 'mt-4 p-4 rounded-md';
+        gameMessage.classList.add(type === 'success' ? 'bg-green-100' : 'bg-yellow-100');
+        gameMessage.textContent = message;
+    }
+
+    function updateGuessList() {
+        guessList.innerHTML = guesses.map(guess => 
+            `<span class="px-2 py-1 bg-gray-100 rounded-full text-sm">${guess}</span>`
+        ).join('');
+    }
+
+    function startNewGame() {
+        targetNumber = Math.floor(Math.random() * 100) + 1;
+        guesses = [];
+        guessInput.value = '';
+        gameMessage.textContent = '';
+        gameMessage.className = 'mt-4 p-4 rounded-md';
+        updateGuessList();
+    }
+
+    guessBtn.addEventListener('click', () => {
+        const guess = parseInt(guessInput.value);
+        if (isNaN(guess) || guess < 1 || guess > 100) {
+            updateGameMessage('Please enter a valid number between 1 and 100', 'error');
+            return;
+        }
+
+        guesses.push(guess);
+        updateGuessList();
+
+        if (guess === targetNumber) {
+            updateGameMessage(`Congratulations! You found the number in ${guesses.length} guesses!`, 'success');
+            guessBtn.disabled = true;
+        } else {
+            const message = guess < targetNumber ? 'Too low!' : 'Too high!';
+            updateGameMessage(message, 'warning');
+        }
+
+        guessInput.value = '';
+        guessInput.focus();
+    });
+
+    newGameBtn.addEventListener('click', () => {
+        startNewGame();
+        guessBtn.disabled = false;
+    });
+
+    guessInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !guessBtn.disabled) {
+            guessBtn.click();
         }
     });
 });
