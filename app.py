@@ -10,6 +10,15 @@ import time
 from urllib.parse import quote_plus
 import concurrent.futures
 import threading
+import logging
+import traceback
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s %(levelname)s: %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 
 app = Flask(__name__)
 CORS(app)
@@ -164,8 +173,9 @@ leaderboard = []
 
 @app.errorhandler(Exception)
 def handle_error(error):
-    app.logger.error(f"An error occurred: {str(error)}")
-    return jsonify({"error": str(error)}), 500
+    tb = traceback.format_exc()
+    app.logger.error(f"An error occurred: {str(error)}\nTraceback:\n{tb}")
+    return jsonify({"error": str(error), "traceback": tb}), 500
 
 @app.route('/submit-score', methods=['POST'])
 def submit_score():
@@ -210,28 +220,31 @@ def index():
 def search():
     try:
         data = request.get_json()
-        if not data:
-            return jsonify([]), 200
+        app.logger.info(f"Received search request: {data}")
         
-        companies = data.get('companies', [])
-        if not companies:
-            return jsonify([]), 200
+        if not data or 'companies' not in data:
+            return jsonify({"error": "No companies provided"}), 400
+            
+        companies = data['companies']
+        app.logger.info(f"Processing companies: {companies}")
         
-        # Remove duplicates and empty strings
-        companies = list(set(filter(None, [c.strip() for c in companies])))
-        
-        # Limit to 50 companies at once
-        companies = companies[:50]
-        
-        # Use ThreadPoolExecutor for concurrent processing
+        results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            results = list(executor.map(search_single_company, companies))
+            futures = {executor.submit(search_single_company, company): company for company in companies}
+            for future in concurrent.futures.as_completed(futures):
+                company = futures[future]
+                try:
+                    result = future.result()
+                    app.logger.info(f"Search result for {company}: {result}")
+                    results.append(result)
+                except Exception as e:
+                    app.logger.error(f"Error processing company {company}: {str(e)}")
+                    results.append({"company": company, "error": str(e)})
         
         return jsonify(results)
-        
     except Exception as e:
-        print(f"Search error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        app.logger.error(f"Error in search endpoint: {str(e)}")
+        raise
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5002))
