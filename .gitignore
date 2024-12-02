@@ -24,3 +24,5 @@ venv/
 ENV/
 .idea/
 .vscode/
+data/temp_*
+!data/leaderboard.json

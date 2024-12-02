@@ -119,24 +119,52 @@ def search_company(company_name):
         }
 
 # Load leaderboard from file or create empty one
-LEADERBOARD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'leaderboard.json')
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+LEADERBOARD_FILE = os.path.join(DATA_DIR, 'leaderboard.json')
 leaderboard = []
 
 def save_leaderboard():
     try:
-        os.makedirs(os.path.dirname(LEADERBOARD_FILE), exist_ok=True)
-        with open(LEADERBOARD_FILE, 'w') as f:
-            json.dump(leaderboard, f)
+        os.makedirs(DATA_DIR, exist_ok=True)
+        temp_file = os.path.join(DATA_DIR, 'temp_leaderboard.json')
+        
+        # Write to temporary file first
+        with open(temp_file, 'w') as f:
+            json.dump(leaderboard, f, indent=2)
+        
+        # Then rename it to the actual file (atomic operation)
+        os.replace(temp_file, LEADERBOARD_FILE)
+        
+        # Also create a backup
+        backup_file = os.path.join(DATA_DIR, 'leaderboard_backup.json')
+        with open(backup_file, 'w') as f:
+            json.dump(leaderboard, f, indent=2)
+            
     except Exception as e:
         app.logger.error(f"Error saving leaderboard: {e}")
+        raise
 
 def load_leaderboard():
     global leaderboard
     try:
-        with open(LEADERBOARD_FILE, 'r') as f:
-            leaderboard = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        leaderboard = []
+        # Try loading the main file
+        if os.path.exists(LEADERBOARD_FILE):
+            with open(LEADERBOARD_FILE, 'r') as f:
+                leaderboard = json.load(f)
+        # If main file doesn't exist, try loading the backup
+        elif os.path.exists(os.path.join(DATA_DIR, 'leaderboard_backup.json')):
+            with open(os.path.join(DATA_DIR, 'leaderboard_backup.json'), 'r') as f:
+                leaderboard = json.load(f)
+        else:
+            leaderboard = []
+            
+        # Ensure leaderboard is sorted
+        leaderboard.sort(key=lambda x: x['guesses'])
+        
+        # Keep only top 10 scores
+        while len(leaderboard) > 10:
+            leaderboard.pop()
+            
     except Exception as e:
         app.logger.error(f"Error loading leaderboard: {e}")
         leaderboard = []
@@ -167,14 +195,16 @@ def submit_score():
         # Save to file
         save_leaderboard()
         
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'leaderboard': leaderboard})
     except Exception as e:
         app.logger.error(f"Error in submit_score: {e}")
-        return jsonify({'error': 'Server error'}), 500
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/leaderboard', methods=['GET'])
 def get_leaderboard():
     try:
+        # Reload leaderboard from file
+        load_leaderboard()
         return jsonify(leaderboard)
     except Exception as e:
         app.logger.error(f"Error in get_leaderboard: {e}")
