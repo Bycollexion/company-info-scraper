@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 from bs4 import BeautifulSoup
 import requests
 import re
@@ -8,6 +8,10 @@ import logging
 from dotenv import load_dotenv
 import time
 import random
+import json
+from urllib.parse import quote_plus
+import asyncio
+from functools import partial
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,8 +28,18 @@ USER_AGENTS = [
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
 ]
 
+# Additional sources to search
+SOURCES = {
+    'linkedin': 'site:linkedin.com/company',
+    'glassdoor': 'site:glassdoor.com',
+    'jobstreet': 'site:jobstreet.com.sg',
+    'indeed': 'site:indeed.com.sg',
+    'bloomberg': 'site:bloomberg.com/profile',
+    'crunchbase': 'site:crunchbase.com/organization',
+}
+
 def get_random_delay():
-    return random.uniform(1, 3)
+    return random.uniform(0.5, 1.5)
 
 def clean_number(text):
     if not text:
@@ -40,76 +54,127 @@ def make_request(url, max_retries=3):
     
     for attempt in range(max_retries):
         try:
-            time.sleep(get_random_delay())  # Add delay between requests
+            time.sleep(get_random_delay())
             response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             return response.text
         except requests.RequestException as e:
             logger.error(f"Request failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
             if attempt == max_retries - 1:
-                raise
+                return None
             time.sleep(get_random_delay())
     return None
 
-def scrape_website(company_name):
+def search_source(company_name, source_type, source_query):
     try:
-        logger.info(f"Starting scrape for company: {company_name}")
-        
-        # Google search for LinkedIn
-        search_url = f"https://www.google.com/search?q={company_name}+singapore+employees+linkedin"
+        search_url = f"https://www.google.com/search?q={quote_plus(f'{company_name} {source_query} singapore employees')}"
         html_content = make_request(search_url)
         
         if not html_content:
-            raise Exception("Failed to fetch search results")
+            return None
             
         soup = BeautifulSoup(html_content, 'html.parser')
-        employee_count = None
         text_content = soup.get_text()
         
-        # Look for LinkedIn results
-        linkedin_patterns = [
-            r'(\d{1,3}(?:,\d{3})*)\s*employees',
-            r'(\d{1,3}(?:,\d{3})*)\s*workers',
-            r'(\d{1,3}(?:,\d{3})*)\s*staff'
+        # Different patterns for employee counts
+        patterns = [
+            r'(\d{1,3}(?:,\d{3})*)\s*(?:employees|workers|staff)',
+            r'(?:company size|team size|employees).*?(\d{1,3}(?:,\d{3})*)',
+            r'(?:approximately|about|over|more than)\s*(\d{1,3}(?:,\d{3})*)\s*(?:employees|people)',
+            r'(?:workforce of|team of)\s*(\d{1,3}(?:,\d{3})*)',
         ]
         
-        for pattern in linkedin_patterns:
+        for pattern in patterns:
             matches = re.findall(pattern, text_content, re.IGNORECASE)
             if matches:
-                employee_count = clean_number(matches[0])
-                break
-        
-        # Try company website
-        company_url = f"https://www.google.com/search?q={company_name}+singapore+official+website"
-        html_content = make_request(company_url)
+                count = clean_number(matches[0])
+                if count:
+                    return {'source': source_type, 'count': count}
+                    
+        return None
+    except Exception as e:
+        logger.error(f"Error searching {source_type} for {company_name}: {str(e)}")
+        return None
+
+def get_company_website(company_name):
+    try:
+        search_url = f"https://www.google.com/search?q={quote_plus(f'{company_name} singapore official website')}"
+        html_content = make_request(search_url)
         
         if not html_content:
-            raise Exception("Failed to fetch company website results")
+            return None
             
         soup = BeautifulSoup(html_content, 'html.parser')
-        company_website = None
         
-        # Extract first result as company website
         for link in soup.find_all('a'):
             href = link.get('href', '')
             if 'url?q=' in href and not any(x in href for x in ['google.com', 'youtube.com', 'facebook.com']):
-                company_website = href.split('url?q=')[1].split('&')[0]
-                break
+                return href.split('url?q=')[1].split('&')[0]
         
-        logger.info(f"Completed scrape for {company_name}: Found {employee_count} employees")
-        
-        return {
-            'company_name': company_name,
-            'employee_count': employee_count,
-            'company_website': company_website,
-            'sources': ['Google Search', 'LinkedIn', 'Company Website']
-        }
+        return None
     except Exception as e:
-        logger.error(f"Error scraping {company_name}: {str(e)}")
-        return {
-            'company_name': company_name,
-            'error': f"Failed to fetch company information: {str(e)}"
-        }
+        logger.error(f"Error getting website for {company_name}: {str(e)}")
+        return None
+
+def process_company_batch(companies):
+    results = []
+    
+    for company in companies:
+        try:
+            logger.info(f"Processing company: {company}")
+            
+            # Get company website
+            website = get_company_website(company)
+            
+            # Search all sources concurrently
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(SOURCES)) as executor:
+                future_to_source = {
+                    executor.submit(search_source, company, source_type, source_query): source_type
+                    for source_type, source_query in SOURCES.items()
+                }
+                
+                employee_counts = []
+                for future in concurrent.futures.as_completed(future_to_source):
+                    result = future.result()
+                    if result:
+                        employee_counts.append(result)
+            
+            # Determine most likely employee count
+            if employee_counts:
+                # Use the most common count or the median
+                counts = [ec['count'] for ec in employee_counts]
+                most_common = max(set(counts), key=counts.count)
+                
+                results.append({
+                    'company_name': company,
+                    'employee_count': most_common,
+                    'company_website': website,
+                    'sources': [ec['source'] for ec in employee_counts],
+                    'all_counts': {ec['source']: ec['count'] for ec in employee_counts}
+                })
+            else:
+                results.append({
+                    'company_name': company,
+                    'error': 'No employee count found'
+                })
+                
+        except Exception as e:
+            logger.error(f"Error processing {company}: {str(e)}")
+            results.append({
+                'company_name': company,
+                'error': str(e)
+            })
+            
+    return results
+
+def stream_results(companies):
+    batch_size = 10
+    for i in range(0, len(companies), batch_size):
+        batch = companies[i:i + batch_size]
+        results = process_company_batch(batch)
+        for result in results:
+            yield f"data: {json.dumps(result)}\n\n"
+            time.sleep(0.1)  # Small delay to prevent overwhelming the client
 
 @app.route('/')
 def index():
@@ -126,14 +191,14 @@ def search():
         if not companies:
             return jsonify({'error': 'Empty company list'}), 400
             
-        logger.info(f"Received search request for companies: {companies}")
+        companies = [c.strip() for c in companies if c.strip()]
+        logger.info(f"Received search request for {len(companies)} companies")
         
-        # Use ThreadPoolExecutor to scrape multiple companies concurrently
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            results = list(executor.map(scrape_website, companies))
-        
-        logger.info("Search completed successfully")
-        return jsonify(results)
+        # Return SSE stream for real-time updates
+        return Response(
+            stream_results(companies),
+            mimetype='text/event-stream'
+        )
         
     except Exception as e:
         logger.error(f"Search endpoint error: {str(e)}")
