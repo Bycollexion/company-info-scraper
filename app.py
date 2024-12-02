@@ -8,9 +8,127 @@ import logging
 from urllib.parse import quote_plus
 import re
 import os
+from datetime import datetime, timedelta
+from collections import defaultdict
+import threading
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('security.log'),
+        logging.StreamHandler()
+    ]
+)
+security_logger = logging.getLogger('security')
+
+# Security monitoring
+class SecurityMonitor:
+    def __init__(self):
+        self.ip_requests = defaultdict(list)
+        self.blocked_ips = set()
+        self.suspicious_activities = []
+        self.lock = threading.Lock()
+        
+        # Start cleanup thread
+        self.cleanup_thread = threading.Thread(target=self._cleanup_old_data, daemon=True)
+        self.cleanup_thread.start()
+    
+    def _cleanup_old_data(self):
+        while True:
+            time.sleep(3600)  # Run every hour
+            self.cleanup()
+    
+    def cleanup(self):
+        with self.lock:
+            current_time = datetime.now()
+            # Clean up requests older than 1 hour
+            for ip in list(self.ip_requests.keys()):
+                self.ip_requests[ip] = [
+                    req for req in self.ip_requests[ip]
+                    if current_time - req['timestamp'] < timedelta(hours=1)
+                ]
+                if not self.ip_requests[ip]:
+                    del self.ip_requests[ip]
+            
+            # Clean up old suspicious activities (keep last 1000)
+            if len(self.suspicious_activities) > 1000:
+                self.suspicious_activities = self.suspicious_activities[-1000:]
+    
+    def log_request(self, ip, endpoint, status_code):
+        with self.lock:
+            if ip in self.blocked_ips:
+                return False
+            
+            current_time = datetime.now()
+            self.ip_requests[ip].append({
+                'timestamp': current_time,
+                'endpoint': endpoint,
+                'status_code': status_code
+            })
+            
+            # Check for suspicious patterns
+            return self._check_suspicious_activity(ip, endpoint)
+    
+    def _check_suspicious_activity(self, ip, endpoint):
+        requests = self.ip_requests[ip]
+        current_time = datetime.now()
+        recent_requests = [
+            req for req in requests
+            if current_time - req['timestamp'] < timedelta(minutes=1)
+        ]
+        
+        # Check rate limiting (more than 60 requests per minute)
+        if len(recent_requests) > 60:
+            self._log_suspicious("Rate limit exceeded", ip, endpoint)
+            self.blocked_ips.add(ip)
+            return False
+        
+        # Check for repeated errors
+        error_requests = [
+            req for req in recent_requests
+            if req['status_code'] >= 400
+        ]
+        if len(error_requests) > 10:
+            self._log_suspicious("Multiple errors", ip, endpoint)
+            return False
+        
+        # Check for suspicious patterns in endpoints
+        if endpoint == '/search':
+            search_requests = [
+                req for req in recent_requests
+                if req['endpoint'] == '/search'
+            ]
+            if len(search_requests) > 20:
+                self._log_suspicious("Excessive search requests", ip, endpoint)
+                return False
+        
+        return True
+    
+    def _log_suspicious(self, reason, ip, endpoint):
+        event = {
+            'timestamp': datetime.now(),
+            'reason': reason,
+            'ip': ip,
+            'endpoint': endpoint
+        }
+        self.suspicious_activities.append(event)
+        security_logger.warning(f"Suspicious activity: {reason} from IP {ip} on {endpoint}")
+
+# Initialize security monitor
+security_monitor = SecurityMonitor()
+
+@app.before_request
+def monitor_request():
+    ip = request.remote_addr
+    endpoint = request.endpoint
+    
+    if not security_monitor.log_request(ip, endpoint, 200):
+        security_logger.warning(f"Blocked request from IP {ip} to {endpoint}")
+        return jsonify({'error': 'Too many requests'}), 429
 
 # Security Headers
 @app.after_request
@@ -270,6 +388,18 @@ def search():
     except Exception as e:
         app.logger.error(f"Error in search: {e}")
         return jsonify({'error': 'Server error'}), 500
+
+@app.route('/admin/security', methods=['GET'])
+def security_dashboard():
+    if request.remote_addr != '127.0.0.1':  # Only allow local access
+        return jsonify({'error': 'Unauthorized'}), 403
+        
+    return jsonify({
+        'blocked_ips': list(security_monitor.blocked_ips),
+        'suspicious_activities': security_monitor.suspicious_activities,
+        'active_ips': len(security_monitor.ip_requests),
+        'total_blocked': len(security_monitor.blocked_ips)
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5002))
