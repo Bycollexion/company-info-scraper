@@ -12,6 +12,21 @@ import os
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
+# Security Headers
+@app.after_request
+def add_security_headers(response):
+    # Prevent clickjacking attacks
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    # Enable XSS protection
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    # Prevent MIME type sniffing
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    # Content Security Policy
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+    # HSTS (uncomment if you have HTTPS)
+    # response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    return response
+
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -49,6 +64,12 @@ def extract_employee_count(text):
         if counts:
             return max([int(count.replace('+', '')) for count in counts])
     return None
+
+def sanitize_input(text):
+    if not text or not isinstance(text, str):
+        return ""
+    # Remove any potentially dangerous characters
+    return re.sub(r'[<>\'";]', '', text)
 
 def search_company(company_name):
     try:
@@ -179,9 +200,17 @@ def submit_score():
         if not data or 'name' not in data or 'guesses' not in data:
             return jsonify({'error': 'Invalid data'}), 400
         
+        # Validate input
+        name = sanitize_input(str(data['name']))[:50]  # Limit name length
+        guesses = data['guesses']
+        
+        # Validate guesses
+        if not isinstance(guesses, int) or guesses < 1 or guesses > 100:
+            return jsonify({'error': 'Invalid guess count'}), 400
+            
         score = {
-            'name': data['name'],
-            'guesses': data['guesses'],
+            'name': name,
+            'guesses': guesses,
             'date': time.strftime('%Y-%m-%d %H:%M')
         }
         
@@ -198,7 +227,7 @@ def submit_score():
         return jsonify({'success': True, 'leaderboard': leaderboard})
     except Exception as e:
         app.logger.error(f"Error in submit_score: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Server error'}), 500
 
 @app.route('/leaderboard', methods=['GET'])
 def get_leaderboard():
@@ -216,27 +245,31 @@ def index():
 
 @app.route('/search', methods=['POST'])
 def search():
-    if not request.is_json:
-        return jsonify({'error': 'Content-Type must be application/json'}), 400
-    
-    data = request.get_json()
-    companies = data.get('companies', []) if data else []
-    
-    if not companies:
-        return jsonify({'error': 'No companies provided'}), 400
+    try:
+        data = request.get_json()
+        if not data or 'companies' not in data:
+            return jsonify({'error': 'No companies provided'}), 400
 
-    results = []
-    for company in companies:
-        try:
-            result = search_company(company)
-            results.append(result)
-        except Exception as e:
-            results.append({
-                'company_name': company,
-                'error': str(e)
-            })
-    
-    return jsonify(results)
+        companies = data['companies'].split('\n')
+        results = []
+        
+        for company in companies[:10]:  # Limit to 10 companies
+            company = sanitize_input(company.strip())
+            if company:  # Skip empty lines
+                try:
+                    result = search_company(company)
+                    results.append(result)
+                except Exception as e:
+                    app.logger.error(f"Error searching for {company}: {e}")
+                    results.append({
+                        'name': company,
+                        'error': 'Failed to fetch data'
+                    })
+        
+        return jsonify(results)
+    except Exception as e:
+        app.logger.error(f"Error in search: {e}")
+        return jsonify({'error': 'Server error'}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5002))

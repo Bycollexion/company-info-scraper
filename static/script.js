@@ -103,15 +103,24 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="px-4 py-2 whitespace-nowrap text-sm">
                         ${index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : (index + 1)}
                     </td>
-                    <td class="px-4 py-2 whitespace-nowrap text-sm font-medium">${entry.name}</td>
+                    <td class="px-4 py-2 whitespace-nowrap text-sm font-medium">${escapeHtml(entry.name)}</td>
                     <td class="px-4 py-2 whitespace-nowrap text-sm">${entry.guesses} guesses</td>
-                    <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500">${entry.date}</td>
+                    <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500">${escapeHtml(entry.date)}</td>
                 </tr>
             `).join('') || '<tr><td colspan="4" class="text-center py-4">No scores yet!</td></tr>';
         } catch (error) {
             console.error('Error updating leaderboard:', error);
             showNotification('Error loading leaderboard', 'error');
         }
+    }
+
+    function escapeHtml(unsafe) {
+        return unsafe
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
     }
 
     function showNotification(message, type = 'info') {
@@ -123,7 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const notification = document.createElement('div');
         notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg transform transition-all duration-300 ${colors[type]}`;
-        notification.textContent = message;
+        notification.textContent = escapeHtml(message);
         
         document.body.appendChild(notification);
         
