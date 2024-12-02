@@ -3,120 +3,154 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Company Info & Number Game</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <title>Company Scanner</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <style>
         body {
-            font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #f6f8fc 0%, #e9edf5 100%);
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, #2f2f2f 0%, #333 100%);
             min-height: 100vh;
         }
-        .glass-card {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+        .container {
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color: #333;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            color: #fff;
         }
-        .tab-btn.active {
-            background: #4F46E5;
-            color: white;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.1);
+        .search-container {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
         }
-        .game-input {
-            border: 2px solid #E5E7EB;
-            transition: all 0.2s;
+        .search-box {
+            display: flex;
+            flex-direction: column;
         }
-        .game-input:focus {
-            border-color: #4F46E5;
-            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2);
+        .search-input {
+            padding: 10px;
+            border: 1px solid #444;
+            border-radius: 5px;
+            width: 70%;
+            background-color: #444;
+            color: #fff;
         }
-        .btn-primary {
-            background: #4F46E5;
-            transition: all 0.2s;
+        .primary-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            background-color: #555;
         }
-        .btn-primary:hover {
-            background: #4338CA;
-            transform: translateY(-1px);
+        .primary-btn:hover {
+            background-color: #666;
         }
-        .leaderboard-table {
-            min-w-full divide-y divide-gray-200
+        .search-help {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .button-text {
+            margin-right: 10px;
+        }
+        .search-icon {
+            width: 20px;
+            height: 20px;
+            fill: #fff;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-top: 4px solid #555;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+        .loading-text {
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+        .table-container {
+            margin-top: 20px;
+        }
+        .table-container table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .table-container th, .table-container td {
+            border: 1px solid #444;
+            padding: 10px;
+            text-align: left;
+        }
+        .table-container th {
+            background-color: #444;
+        }
+        .table-container td {
+            background-color: #333;
+        }
+        .no-results-message {
+            font-size: 16px;
+            margin-bottom: 10px;
         }
     </style>
 </head>
-<body class="bg-gray-50">
-    <div class="container mx-auto px-4 py-8">
-        <div class="glass-card p-8 mb-8">
-            <div class="flex justify-center space-x-4 mb-8">
-                <button class="tab-btn active px-6 py-3 rounded-lg font-medium" onclick="switchTab('search')">Company Search</button>
-                <button class="tab-btn px-6 py-3 rounded-lg font-medium" onclick="switchTab('game')">Number Game</button>
+<body>
+    <div class="container">
+        <h1>Company Scanner</h1>
+        
+        <div class="search-container">
+            <div class="search-box">
+                <textarea id="companyInput" placeholder="Enter company names to search..." rows="1"></textarea>
+                <div class="search-help">Press Shift+Enter to search</div>
             </div>
+            <button onclick="searchCompanies()" id="searchButton">
+                <span class="button-text">Search</span>
+                <svg class="search-icon" viewBox="0 0 24 24">
+                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                </svg>
+            </button>
+        </div>
 
-            <!-- Search Tab -->
-            <div id="search" class="tab-content active">
-                <div class="max-w-2xl mx-auto">
-                    <h2 class="text-3xl font-semibold text-gray-800 mb-6 text-center">Company Information Search</h2>
-                    <div class="mb-6">
-                        <input type="text" id="searchInput" placeholder="Enter company name..." 
-                               class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    </div>
-                    <div class="text-center">
-                        <button onclick="searchCompany()" class="px-8 py-3 rounded-lg font-medium">
-                            Search
-                        </button>
-                    </div>
-                    <div id="loading" class="loading hidden"></div>
-                    <div id="results" class="results-grid mt-8"></div>
-                </div>
+        <div id="loading" style="display: none;">
+            <div class="spinner"></div>
+            <div class="loading-text">Searching companies...</div>
+        </div>
+
+        <div id="results" style="display: none;">
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Company</th>
+                            <th>Employees</th>
+                            <th>Region</th>
+                            <th>Source</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsBody">
+                    </tbody>
+                </table>
             </div>
+        </div>
 
-            <!-- Game Tab -->
-            <div id="game" class="tab-content">
-                <div class="game-container">
-                    <h2 class="text-3xl font-semibold text-gray-800 mb-6 text-center">Number Guessing Game</h2>
-                    <div class="text-center mb-8">
-                        <p class="text-gray-600 mb-4">Guess a number between 1 and 100</p>
-                        <input type="number" id="guessInput" min="1" max="100" class="game-input">
-                        <button onclick="makeGuess()" class="mt-4 px-8 py-3 rounded-lg font-medium">
-                            Guess
-                        </button>
-                    </div>
-                    <div id="message" class="game-message"></div>
-                    <div id="gameOver" class="hidden text-center mt-8">
-                        <h3 class="text-2xl font-semibold mb-4">Game Over!</h3>
-                        <input type="text" id="nameInput" placeholder="Enter your name" 
-                               class="px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        <button onclick="submitScore()" class="mt-4 px-6 py-2 rounded-lg font-medium">
-                            Submit Score
-                        </button>
-                    </div>
-                    
-                    <!-- Leaderboard -->
-                    <div class="mt-12">
-                        <h3 class="text-2xl font-semibold mb-4 text-center">Leaderboard</h3>
-                        <div class="overflow-x-auto">
-                            <table class="leaderboard-table">
-                                <thead>
-                                    <tr class="text-left">
-                                        <th class="px-6 py-3 text-gray-600">Rank</th>
-                                        <th class="px-6 py-3 text-gray-600">Name</th>
-                                        <th class="px-6 py-3 text-gray-600">Score</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="leaderboard">
-                                    <!-- Leaderboard entries will be inserted here -->
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
+        <div id="noResults" style="display: none;">
+            <div class="no-results-message">
+                No results found. Try different company names.
             </div>
         </div>
     </div>
-
-    <!-- Notification -->
-    <div id="notification" class="notification hidden"></div>
 
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>

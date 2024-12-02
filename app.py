@@ -3,359 +3,197 @@ from bs4 import BeautifulSoup
 import requests
 import random
 import json
-import time
-import logging
-from urllib.parse import quote_plus
 import re
 import os
-from datetime import datetime, timedelta
-from collections import defaultdict
+import time
+from urllib.parse import quote_plus
+import concurrent.futures
 import threading
 
 app = Flask(__name__)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('security.log'),
-        logging.StreamHandler()
-    ]
-)
-security_logger = logging.getLogger('security')
+# Thread-local storage for session
+thread_local = threading.local()
 
-# Security monitoring
-class SecurityMonitor:
-    def __init__(self):
-        self.ip_requests = defaultdict(list)
-        self.blocked_ips = set()
-        self.suspicious_activities = []
-        self.lock = threading.Lock()
-        
-        # Start cleanup thread
-        self.cleanup_thread = threading.Thread(target=self._cleanup_old_data, daemon=True)
-        self.cleanup_thread.start()
-    
-    def _cleanup_old_data(self):
-        while True:
-            time.sleep(3600)  # Run every hour
-            self.cleanup()
-    
-    def cleanup(self):
-        with self.lock:
-            current_time = datetime.now()
-            # Clean up requests older than 1 hour
-            for ip in list(self.ip_requests.keys()):
-                self.ip_requests[ip] = [
-                    req for req in self.ip_requests[ip]
-                    if current_time - req['timestamp'] < timedelta(hours=1)
-                ]
-                if not self.ip_requests[ip]:
-                    del self.ip_requests[ip]
-            
-            # Clean up old suspicious activities (keep last 1000)
-            if len(self.suspicious_activities) > 1000:
-                self.suspicious_activities = self.suspicious_activities[-1000:]
-    
-    def log_request(self, ip, endpoint, status_code):
-        with self.lock:
-            if ip in self.blocked_ips:
-                return False
-            
-            current_time = datetime.now()
-            self.ip_requests[ip].append({
-                'timestamp': current_time,
-                'endpoint': endpoint,
-                'status_code': status_code
-            })
-            
-            # Check for suspicious patterns
-            return self._check_suspicious_activity(ip, endpoint)
-    
-    def _check_suspicious_activity(self, ip, endpoint):
-        requests = self.ip_requests[ip]
-        current_time = datetime.now()
-        recent_requests = [
-            req for req in requests
-            if current_time - req['timestamp'] < timedelta(minutes=1)
-        ]
-        
-        # Check rate limiting (more than 60 requests per minute)
-        if len(recent_requests) > 60:
-            self._log_suspicious("Rate limit exceeded", ip, endpoint)
-            self.blocked_ips.add(ip)
-            return False
-        
-        # Check for repeated errors
-        error_requests = [
-            req for req in recent_requests
-            if req['status_code'] >= 400
-        ]
-        if len(error_requests) > 10:
-            self._log_suspicious("Multiple errors", ip, endpoint)
-            return False
-        
-        # Check for suspicious patterns in endpoints
-        if endpoint == '/search':
-            search_requests = [
-                req for req in recent_requests
-                if req['endpoint'] == '/search'
-            ]
-            if len(search_requests) > 20:
-                self._log_suspicious("Excessive search requests", ip, endpoint)
-                return False
-        
-        return True
-    
-    def _log_suspicious(self, reason, ip, endpoint):
-        event = {
-            'timestamp': datetime.now(),
-            'reason': reason,
-            'ip': ip,
-            'endpoint': endpoint
-        }
-        self.suspicious_activities.append(event)
-        security_logger.warning(f"Suspicious activity: {reason} from IP {ip} on {endpoint}")
-
-# Initialize security monitor
-security_monitor = SecurityMonitor()
-
-@app.before_request
-def monitor_request():
-    ip = request.remote_addr
-    endpoint = request.endpoint
-    
-    if not security_monitor.log_request(ip, endpoint, 200):
-        security_logger.warning(f"Blocked request from IP {ip} to {endpoint}")
-        return jsonify({'error': 'Too many requests'}), 429
-
-# Security Headers
-@app.after_request
-def add_security_headers(response):
-    # Prevent clickjacking attacks
-    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-    # Enable XSS protection
-    response.headers['X-XSS-Protection'] = '1; mode=block'
-    # Prevent MIME type sniffing
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    # Content Security Policy
-    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
-    # HSTS (uncomment if you have HTTPS)
-    # response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-    return response
-
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
-]
+def get_session():
+    if not hasattr(thread_local, "session"):
+        thread_local.session = requests.Session()
+    return thread_local.session
 
 def get_random_user_agent():
-    return random.choice(USER_AGENTS)
+    return random.choice([
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    ])
 
 def make_request(url, retries=3):
-    headers = {'User-Agent': get_random_user_agent()}
+    session = get_session()
+    headers = {
+        'User-Agent': get_random_user_agent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive',
+    }
+    
     for i in range(retries):
         try:
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            return response.text
+            response = session.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                return response.text
+            elif response.status_code == 429:  # Too Many Requests
+                wait_time = (i + 1) * 2
+                time.sleep(wait_time)
+                continue
+            else:
+                response.raise_for_status()
         except Exception as e:
-            if i == retries - 1:
-                raise e
-            time.sleep(random.uniform(1, 3))
+            if i < retries - 1:
+                time.sleep(2)
+                continue
     return None
 
 def extract_employee_count(text):
-    patterns = [
-        r'(\d{1,3}(?:,\d{3})*(?:\+)?)\s*(?:employees?|staff|people|workers)',
-        r'(?:employees?|staff|people|workers)[:\s]+(\d{1,3}(?:,\d{3})*(?:\+)?)',
-        r'team of (\d{1,3}(?:,\d{3})*(?:\+)?)',
-        r'(\d{1,3}(?:,\d{3})*(?:\+)?)\s*team members',
-    ]
-    
-    for pattern in patterns:
-        matches = re.finditer(pattern, text.lower())
-        counts = [match.group(1).replace(',', '') for match in matches]
-        if counts:
-            return max([int(count.replace('+', '')) for count in counts])
-    return None
+    try:
+        # Look for Singapore-specific employee counts
+        sg_patterns = [
+            r'(\d{1,3}(?:,\d{3})*)\s*employees? in Singapore',
+            r'Singapore[^.]*?(\d{1,3}(?:,\d{3})*)\s*employees?',
+            r'(\d{1,3}(?:,\d{3})*)\s*staff in Singapore',
+            r'Singapore[^.]*?(\d{1,3}(?:,\d{3})*)\s*staff'
+        ]
+        
+        for pattern in sg_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                count = match.group(1).replace(',', '')
+                return int(count), 'Singapore specific'
+        
+        # General employee count patterns as fallback
+        patterns = [
+            r'(\d{1,3}(?:,\d{3})*)\s*employees?',
+            r'(\d{1,3}(?:,\d{3})*)\s*staff',
+            r'(\d{1,3}(?:,\d{3})*)\s*people',
+            r'(\d{1,3}(?:,\d{3})*)\s*workers'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                count = match.group(1).replace(',', '')
+                return int(count), 'Global'
+                
+    except Exception as e:
+        print(f"Error extracting employee count: {str(e)}")
+    return None, None
 
 def sanitize_input(text):
     if not text or not isinstance(text, str):
         return ""
-    # Remove any potentially dangerous characters
     return re.sub(r'[<>\'";]', '', text)
 
-def search_company(company_name):
+def search_single_company(company_name):
     try:
-        search_query = f"{company_name} singapore company employees linkedin"
-        search_url = f"https://www.google.com/search?q={quote_plus(search_query)}"
+        # Only search LinkedIn for speed
+        search_url = f"https://www.google.com/search?q={quote_plus(f'{company_name} singapore site:linkedin.com/company')}"
         
         html_content = make_request(search_url)
         if not html_content:
             return {
-                'company_name': company_name,
-                'error': 'Failed to fetch search results'
+                'name': company_name,
+                'error': 'No results found'
             }
-
+        
         soup = BeautifulSoup(html_content, 'html.parser')
-        search_results = soup.find_all('div', class_='g')
+        first_result = soup.select_one('div.g')
         
-        employee_counts = []
-        sources = set()
-        company_website = None
-        
-        for result in search_results[:5]:
-            try:
-                link = result.find('a')['href']
-                if not company_website and company_name.lower() in link.lower():
-                    company_website = link
-
-                snippet = result.get_text().lower()
-                count = extract_employee_count(snippet)
-                
-                if count:
-                    employee_counts.append(count)
-                    source = re.search(r'(?:www\.|//)([\w-]+)\.', link)
-                    if source:
-                        sources.add(source.group(1).capitalize())
-            except Exception as e:
-                logging.warning(f"Error processing search result: {str(e)}")
-                continue
-
-        if not employee_counts:
+        if not first_result:
             return {
-                'company_name': company_name,
-                'employee_count': None,
-                'company_website': company_website,
-                'sources': list(sources),
-                'all_counts': {}
+                'name': company_name,
+                'error': 'No results found'
             }
-
-        # Get the median count to avoid outliers
-        employee_counts.sort()
-        median_count = employee_counts[len(employee_counts)//2]
+            
+        title_elem = first_result.select_one('h3')
+        link_elem = first_result.select_one('a')
+        snippet_elem = first_result.select_one('div.VwiC3b')
         
-        all_counts = {}
-        for count, source in zip(employee_counts, sources):
-            all_counts[source] = count
-
+        if not all([title_elem, link_elem, snippet_elem]):
+            return {
+                'name': company_name,
+                'error': 'Incomplete result'
+            }
+        
+        title = re.sub(r'\s*\|\s*LinkedIn$', '', title_elem.get_text().strip())
+        link = link_elem['href']
+        snippet = snippet_elem.get_text().strip()
+        
+        employee_count, count_source = extract_employee_count(snippet)
+        
+        # Try to get more details from LinkedIn page
+        if 'linkedin.com' in link.lower():
+            try:
+                page_content = make_request(link)
+                if page_content:
+                    page_soup = BeautifulSoup(page_content, 'html.parser')
+                    page_text = page_soup.get_text()
+                    page_count, page_source = extract_employee_count(page_text)
+                    if page_count and (not employee_count or page_source == 'Singapore specific'):
+                        employee_count = page_count
+                        count_source = page_source
+            except:
+                pass
+        
         return {
-            'company_name': company_name,
-            'employee_count': median_count,
-            'company_website': company_website,
-            'sources': list(sources),
-            'all_counts': all_counts
+            'name': company_name,
+            'found_name': title,
+            'employee_count': employee_count,
+            'count_source': count_source,
+            'source': 'LinkedIn',
+            'url': link
         }
+        
     except Exception as e:
-        logging.error(f"Error searching for {company_name}: {str(e)}")
         return {
-            'company_name': company_name,
+            'name': company_name,
             'error': str(e)
         }
 
-# Load leaderboard from file or create empty one
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
-LEADERBOARD_FILE = os.path.join(DATA_DIR, 'leaderboard.json')
+# In-memory leaderboard
 leaderboard = []
 
-def save_leaderboard():
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        temp_file = os.path.join(DATA_DIR, 'temp_leaderboard.json')
-        
-        # Write to temporary file first
-        with open(temp_file, 'w') as f:
-            json.dump(leaderboard, f, indent=2)
-        
-        # Then rename it to the actual file (atomic operation)
-        os.replace(temp_file, LEADERBOARD_FILE)
-        
-        # Also create a backup
-        backup_file = os.path.join(DATA_DIR, 'leaderboard_backup.json')
-        with open(backup_file, 'w') as f:
-            json.dump(leaderboard, f, indent=2)
-            
-    except Exception as e:
-        app.logger.error(f"Error saving leaderboard: {e}")
-        raise
-
-def load_leaderboard():
-    global leaderboard
-    try:
-        # Try loading the main file
-        if os.path.exists(LEADERBOARD_FILE):
-            with open(LEADERBOARD_FILE, 'r') as f:
-                leaderboard = json.load(f)
-        # If main file doesn't exist, try loading the backup
-        elif os.path.exists(os.path.join(DATA_DIR, 'leaderboard_backup.json')):
-            with open(os.path.join(DATA_DIR, 'leaderboard_backup.json'), 'r') as f:
-                leaderboard = json.load(f)
-        else:
-            leaderboard = []
-            
-        # Ensure leaderboard is sorted
-        leaderboard.sort(key=lambda x: x['guesses'])
-        
-        # Keep only top 10 scores
-        while len(leaderboard) > 10:
-            leaderboard.pop()
-            
-    except Exception as e:
-        app.logger.error(f"Error loading leaderboard: {e}")
-        leaderboard = []
-
-# Load leaderboard on startup
-load_leaderboard()
-
-@app.route('/submit_score', methods=['POST'])
+@app.route('/submit-score', methods=['POST'])
 def submit_score():
     try:
         data = request.get_json()
-        if not data or 'name' not in data or 'guesses' not in data:
+        if not data or 'name' not in data or 'score' not in data:
             return jsonify({'error': 'Invalid data'}), 400
         
-        # Validate input
-        name = sanitize_input(str(data['name']))[:50]  # Limit name length
-        guesses = data['guesses']
+        name = sanitize_input(data['name'])
+        score = int(data['score'])
         
-        # Validate guesses
-        if not isinstance(guesses, int) or guesses < 1 or guesses > 100:
-            return jsonify({'error': 'Invalid guess count'}), 400
-            
-        score = {
+        if not name or score < 1:
+            return jsonify({'error': 'Invalid data'}), 400
+        
+        # Add score to leaderboard
+        leaderboard.append({
             'name': name,
-            'guesses': guesses,
+            'score': score,
             'date': time.strftime('%Y-%m-%d %H:%M')
-        }
+        })
         
-        leaderboard.append(score)
-        leaderboard.sort(key=lambda x: x['guesses'])
+        # Sort leaderboard by score (lower is better)
+        leaderboard.sort(key=lambda x: x['score'])
         
         # Keep only top 10 scores
         while len(leaderboard) > 10:
             leaderboard.pop()
-        
-        # Save to file
-        save_leaderboard()
-        
+            
         return jsonify({'success': True, 'leaderboard': leaderboard})
     except Exception as e:
-        app.logger.error(f"Error in submit_score: {e}")
-        return jsonify({'error': 'Server error'}), 500
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/leaderboard', methods=['GET'])
 def get_leaderboard():
-    try:
-        # Reload leaderboard from file
-        load_leaderboard()
-        return jsonify(leaderboard)
-    except Exception as e:
-        app.logger.error(f"Error in get_leaderboard: {e}")
-        return jsonify([])
+    return jsonify(leaderboard)
 
 @app.route('/')
 def index():
@@ -365,41 +203,28 @@ def index():
 def search():
     try:
         data = request.get_json()
-        if not data or 'companies' not in data:
-            return jsonify({'error': 'No companies provided'}), 400
-
-        companies = data['companies'].split('\n')
-        results = []
+        if not data:
+            return jsonify([]), 200
         
-        for company in companies[:10]:  # Limit to 10 companies
-            company = sanitize_input(company.strip())
-            if company:  # Skip empty lines
-                try:
-                    result = search_company(company)
-                    results.append(result)
-                except Exception as e:
-                    app.logger.error(f"Error searching for {company}: {e}")
-                    results.append({
-                        'name': company,
-                        'error': 'Failed to fetch data'
-                    })
+        companies = data.get('companies', [])
+        if not companies:
+            return jsonify([]), 200
+        
+        # Remove duplicates and empty strings
+        companies = list(set(filter(None, [c.strip() for c in companies])))
+        
+        # Limit to 50 companies at once
+        companies = companies[:50]
+        
+        # Use ThreadPoolExecutor for concurrent processing
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            results = list(executor.map(search_single_company, companies))
         
         return jsonify(results)
-    except Exception as e:
-        app.logger.error(f"Error in search: {e}")
-        return jsonify({'error': 'Server error'}), 500
-
-@app.route('/admin/security', methods=['GET'])
-def security_dashboard():
-    if request.remote_addr != '127.0.0.1':  # Only allow local access
-        return jsonify({'error': 'Unauthorized'}), 403
         
-    return jsonify({
-        'blocked_ips': list(security_monitor.blocked_ips),
-        'suspicious_activities': security_monitor.suspicious_activities,
-        'active_ips': len(security_monitor.ip_requests),
-        'total_blocked': len(security_monitor.blocked_ips)
-    })
+    except Exception as e:
+        print(f"Search error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5002))
