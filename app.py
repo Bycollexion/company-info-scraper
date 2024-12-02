@@ -119,41 +119,66 @@ def search_company(company_name):
         }
 
 # Load leaderboard from file or create empty one
-LEADERBOARD_FILE = 'leaderboard.json'
-try:
-    with open(LEADERBOARD_FILE, 'r') as f:
-        leaderboard = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    leaderboard = []
+LEADERBOARD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'leaderboard.json')
+leaderboard = []
+
+def save_leaderboard():
+    try:
+        os.makedirs(os.path.dirname(LEADERBOARD_FILE), exist_ok=True)
+        with open(LEADERBOARD_FILE, 'w') as f:
+            json.dump(leaderboard, f)
+    except Exception as e:
+        app.logger.error(f"Error saving leaderboard: {e}")
+
+def load_leaderboard():
+    global leaderboard
+    try:
+        with open(LEADERBOARD_FILE, 'r') as f:
+            leaderboard = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        leaderboard = []
+    except Exception as e:
+        app.logger.error(f"Error loading leaderboard: {e}")
+        leaderboard = []
+
+# Load leaderboard on startup
+load_leaderboard()
 
 @app.route('/submit_score', methods=['POST'])
 def submit_score():
-    data = request.get_json()
-    if not data or 'name' not in data or 'guesses' not in data:
-        return jsonify({'error': 'Invalid data'}), 400
-    
-    score = {
-        'name': data['name'],
-        'guesses': data['guesses'],
-        'date': time.strftime('%Y-%m-%d %H:%M')
-    }
-    
-    leaderboard.append(score)
-    leaderboard.sort(key=lambda x: x['guesses'])
-    
-    # Keep only top 10 scores
-    while len(leaderboard) > 10:
-        leaderboard.pop()
-    
-    # Save to file
-    with open(LEADERBOARD_FILE, 'w') as f:
-        json.dump(leaderboard, f)
-    
-    return jsonify({'success': True})
+    try:
+        data = request.get_json()
+        if not data or 'name' not in data or 'guesses' not in data:
+            return jsonify({'error': 'Invalid data'}), 400
+        
+        score = {
+            'name': data['name'],
+            'guesses': data['guesses'],
+            'date': time.strftime('%Y-%m-%d %H:%M')
+        }
+        
+        leaderboard.append(score)
+        leaderboard.sort(key=lambda x: x['guesses'])
+        
+        # Keep only top 10 scores
+        while len(leaderboard) > 10:
+            leaderboard.pop()
+        
+        # Save to file
+        save_leaderboard()
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        app.logger.error(f"Error in submit_score: {e}")
+        return jsonify({'error': 'Server error'}), 500
 
 @app.route('/leaderboard', methods=['GET'])
 def get_leaderboard():
-    return jsonify(leaderboard)
+    try:
+        return jsonify(leaderboard)
+    except Exception as e:
+        app.logger.error(f"Error in get_leaderboard: {e}")
+        return jsonify([])
 
 @app.route('/')
 def index():

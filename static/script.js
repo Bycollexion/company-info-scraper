@@ -63,21 +63,40 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch('/submit_score', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: playerName, guesses: guessCount })
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    name: playerName, 
+                    guesses: guessCount 
+                })
             });
-            if (response.ok) {
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const result = await response.json();
+            if (result.success) {
                 updateLeaderboard();
                 showNotification(`Score submitted! You made it in ${guessCount} guesses!`, 'success');
+            } else {
+                throw new Error('Failed to submit score');
             }
         } catch (error) {
-            showNotification('Error submitting score', 'error');
+            console.error('Error submitting score:', error);
+            showNotification('Error submitting score. Please try again.', 'error');
         }
     }
 
     async function updateLeaderboard() {
         try {
             const response = await fetch('/leaderboard');
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
             const leaderboard = await response.json();
             leaderboardBody.innerHTML = leaderboard.map((entry, index) => `
                 <tr class="hover:bg-gray-50 transition-all duration-200 leaderboard-card">
@@ -88,9 +107,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td class="px-4 py-2 whitespace-nowrap text-sm">${entry.guesses} guesses</td>
                     <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500">${entry.date}</td>
                 </tr>
-            `).join('');
+            `).join('') || '<tr><td colspan="4" class="text-center py-4">No scores yet!</td></tr>';
         } catch (error) {
-            showNotification('Error updating leaderboard', 'error');
+            console.error('Error updating leaderboard:', error);
+            showNotification('Error loading leaderboard', 'error');
         }
     }
 
