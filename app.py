@@ -104,6 +104,8 @@ def sanitize_input(text):
 
 def search_single_company(company_name):
     try:
+        app.logger.info(f"Starting search for company: {company_name}")
+        
         # Only search LinkedIn for speed
         search_url = f"https://www.google.com/search?q={quote_plus(f'{company_name} singapore site:linkedin.com/company')}"
         
@@ -163,6 +165,7 @@ def search_single_company(company_name):
         }
         
     except Exception as e:
+        app.logger.error(f"Error in search_single_company for {company_name}: {str(e)}")
         return {
             'name': company_name,
             'error': str(e)
