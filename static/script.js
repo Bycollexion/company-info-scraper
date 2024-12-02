@@ -18,102 +18,224 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // Game Elements
-    const guessInput = document.getElementById('guessInput');
-    const guessBtn = document.getElementById('guessBtn');
-    const gameMessage = document.getElementById('gameMessage');
-    const guessList = document.getElementById('guessList');
-    const playerNameInput = document.getElementById('playerName');
-    const leaderboardBody = document.getElementById('leaderboardBody');
-    let targetNumber = null;
-    let guesses = [];
+    // Game state
+    let targetNumber;
+    let attempts;
+    let gameActive = false;
 
-    // Initialize game
-    startNewGame();
-    updateLeaderboard();
-
-    // Game Functions
-    function startNewGame() {
+    // Initialize the game
+    function initGame() {
         targetNumber = Math.floor(Math.random() * 100) + 1;
-        guesses = [];
-        updateGuessList();
-        updateGameMessage('Make your first guess!', 'info');
-        guessInput.value = '';
-        guessInput.focus();
+        attempts = 0;
+        gameActive = true;
+        document.getElementById('message').textContent = '';
+        document.getElementById('gameOver').classList.add('hidden');
+        document.getElementById('guessInput').value = '';
+        showNotification('New game started!', 'success');
     }
 
-    function updateGameMessage(message, type = 'info') {
-        gameMessage.textContent = message;
-        gameMessage.className = `text-${type === 'error' ? 'red' : 'gray'}-600 font-medium text-center`;
+    // Switch between tabs with animation
+    function switchTab(tabName) {
+        const tabs = ['search', 'game'];
+        const buttons = document.querySelectorAll('.tab-btn');
+        
+        tabs.forEach(tab => {
+            const content = document.getElementById(tab);
+            const isActive = tab === tabName;
+            
+            if (isActive) {
+                content.style.display = 'block';
+                setTimeout(() => {
+                    content.classList.add('active');
+                }, 50);
+            } else {
+                content.classList.remove('active');
+                setTimeout(() => {
+                    content.style.display = 'none';
+                }, 300);
+            }
+        });
+        
+        buttons.forEach(btn => {
+            if (btn.textContent.toLowerCase().includes(tabName)) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
     }
 
-    function updateGuessList() {
-        guessList.innerHTML = guesses
-            .map((g, i) => `
-                <div class="flex items-center space-x-2 animate-fadeIn">
-                    <span class="text-gray-500">#${i + 1}:</span>
-                    <span class="font-medium">${g}</span>
-                </div>
-            `)
-            .join('');
+    // Handle guess submission with animations
+    function makeGuess() {
+        if (!gameActive) {
+            initGame();
+            return;
+        }
+        
+        const guessInput = document.getElementById('guessInput');
+        const guess = parseInt(guessInput.value);
+        const messageEl = document.getElementById('message');
+        
+        if (isNaN(guess) || guess < 1 || guess > 100) {
+            showNotification('Please enter a valid number between 1 and 100', 'error');
+            return;
+        }
+        
+        attempts++;
+        messageEl.classList.remove('animate-fadeIn');
+        
+        setTimeout(() => {
+            messageEl.classList.add('animate-fadeIn');
+            
+            if (guess === targetNumber) {
+                gameActive = false;
+                messageEl.textContent = `Congratulations! You found the number in ${attempts} attempts!`;
+                messageEl.style.color = '#059669';
+                document.getElementById('gameOver').classList.remove('hidden');
+                showNotification('🎉 You won!', 'success');
+            } else {
+                const hint = guess < targetNumber ? 'higher' : 'lower';
+                messageEl.textContent = `Try ${hint}! Attempts: ${attempts}`;
+                messageEl.style.color = '#4F46E5';
+                guessInput.value = '';
+                guessInput.focus();
+            }
+        }, 50);
     }
 
-    async function submitScore(guessCount) {
-        const playerName = playerNameInput.value.trim() || 'Anonymous';
+    // Submit score with animation
+    async function submitScore() {
+        const nameInput = document.getElementById('nameInput');
+        const name = nameInput.value.trim();
+        
+        if (!name) {
+            showNotification('Please enter your name', 'error');
+            return;
+        }
+        
         try {
             const response = await fetch('/submit_score', {
                 method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
-                },
-                body: JSON.stringify({ 
-                    name: playerName, 
-                    guesses: guessCount 
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, score: attempts })
             });
             
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
-            const result = await response.json();
-            if (result.success) {
-                updateLeaderboard();
-                showNotification(`Score submitted! You made it in ${guessCount} guesses!`, 'success');
+            if (response.ok) {
+                showNotification('Score submitted successfully!', 'success');
+                nameInput.value = '';
+                document.getElementById('gameOver').classList.add('hidden');
+                await updateLeaderboard();
+                initGame();
             } else {
                 throw new Error('Failed to submit score');
             }
         } catch (error) {
-            console.error('Error submitting score:', error);
-            showNotification('Error submitting score. Please try again.', 'error');
+            showNotification('Error submitting score', 'error');
+            console.error('Error:', error);
         }
     }
 
+    // Company search with loading animation
+    async function searchCompany() {
+        const input = document.getElementById('searchInput');
+        const query = input.value.trim();
+        
+        if (!query) {
+            showNotification('Please enter a company name', 'error');
+            return;
+        }
+        
+        const loading = document.getElementById('loading');
+        const results = document.getElementById('results');
+        
+        loading.classList.remove('hidden');
+        results.innerHTML = '';
+        
+        try {
+            const response = await fetch('/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                displayResults(data);
+                if (data.length === 0) {
+                    showNotification('No results found', 'info');
+                }
+            } else {
+                throw new Error(data.error || 'Search failed');
+            }
+        } catch (error) {
+            showNotification(error.message, 'error');
+            console.error('Error:', error);
+        } finally {
+            loading.classList.add('hidden');
+        }
+    }
+
+    // Display search results with animation
+    function displayResults(companies) {
+        const results = document.getElementById('results');
+        results.innerHTML = '';
+        
+        companies.forEach((company, index) => {
+            const card = document.createElement('div');
+            card.className = 'result-card animate-fadeIn';
+            card.style.animationDelay = `${index * 100}ms`;
+            
+            card.innerHTML = `
+                <h3 class="text-xl font-semibold mb-2">${escapeHtml(company.name)}</h3>
+                <p class="text-gray-600 mb-2">${escapeHtml(company.description || 'No description available')}</p>
+                ${company.website ? `<a href="${escapeHtml(company.website)}" target="_blank" class="text-indigo-600 hover:text-indigo-800">Visit Website</a>` : ''}
+            `;
+            
+            results.appendChild(card);
+        });
+    }
+
+    // Update leaderboard with animation
     async function updateLeaderboard() {
         try {
             const response = await fetch('/leaderboard');
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
+            const data = await response.json();
             
-            const leaderboard = await response.json();
-            leaderboardBody.innerHTML = leaderboard.map((entry, index) => `
-                <tr class="hover:bg-gray-50 transition-all duration-200 leaderboard-card">
-                    <td class="px-4 py-2 whitespace-nowrap text-sm">
-                        ${index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : (index + 1)}
-                    </td>
-                    <td class="px-4 py-2 whitespace-nowrap text-sm font-medium">${escapeHtml(entry.name)}</td>
-                    <td class="px-4 py-2 whitespace-nowrap text-sm">${entry.guesses} guesses</td>
-                    <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-500">${escapeHtml(entry.date)}</td>
-                </tr>
-            `).join('') || '<tr><td colspan="4" class="text-center py-4">No scores yet!</td></tr>';
+            const leaderboard = document.getElementById('leaderboard');
+            leaderboard.innerHTML = '';
+            
+            data.forEach((entry, index) => {
+                const row = document.createElement('tr');
+                row.className = 'leaderboard-card animate-slideIn';
+                row.style.animationDelay = `${index * 100}ms`;
+                
+                row.innerHTML = `
+                    <td class="px-6 py-4">${index + 1}</td>
+                    <td class="px-6 py-4">${escapeHtml(entry.name)}</td>
+                    <td class="px-6 py-4">${entry.score} attempts</td>
+                `;
+                
+                leaderboard.appendChild(row);
+            });
         } catch (error) {
             console.error('Error updating leaderboard:', error);
-            showNotification('Error loading leaderboard', 'error');
         }
     }
 
+    // Show notification with animation
+    function showNotification(message, type = 'info') {
+        const notification = document.getElementById('notification');
+        notification.textContent = message;
+        notification.className = `notification ${type}`;
+        notification.classList.remove('hidden');
+        
+        setTimeout(() => {
+            notification.classList.add('hidden');
+        }, 3000);
+    }
+
+    // Escape HTML to prevent XSS
     function escapeHtml(unsafe) {
         return unsafe
             .replace(/&/g, "&amp;")
@@ -123,54 +245,23 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/'/g, "&#039;");
     }
 
-    function showNotification(message, type = 'info') {
-        const colors = {
-            success: 'bg-green-100 text-green-800',
-            error: 'bg-red-100 text-red-800',
-            info: 'bg-blue-100 text-blue-800'
-        };
-        
-        const notification = document.createElement('div');
-        notification.className = `fixed top-4 right-4 px-6 py-3 rounded-lg shadow-lg transform transition-all duration-300 ${colors[type]}`;
-        notification.textContent = escapeHtml(message);
-        
-        document.body.appendChild(notification);
-        
-        setTimeout(() => {
-            notification.style.transform = 'translateY(10px)';
-            notification.style.opacity = '0';
-            setTimeout(() => document.body.removeChild(notification), 300);
-        }, 3000);
-    }
+    // Game Elements
+    const guessInput = document.getElementById('guessInput');
+    const guessBtn = document.getElementById('guessBtn');
+    const gameMessage = document.getElementById('gameMessage');
+    const guessList = document.getElementById('guessList');
+    const playerNameInput = document.getElementById('playerName');
+    const leaderboardBody = document.getElementById('leaderboardBody');
+
+    // Initialize game
+    initGame();
+    updateLeaderboard();
 
     // Game Event Listeners
-    guessBtn.addEventListener('click', () => {
-        const guess = parseInt(guessInput.value);
-        if (isNaN(guess) || guess < 1 || guess > 100) {
-            updateGameMessage('Please enter a valid number between 1 and 100', 'error');
-            return;
-        }
-
-        guesses.push(guess);
-        updateGuessList();
-
-        if (guess === targetNumber) {
-            updateGameMessage(`Congratulations! You found the number in ${guesses.length} guesses!`, 'success');
-            submitScore(guesses.length);
-            setTimeout(startNewGame, 3000);
-        } else {
-            const hint = guess < targetNumber ? 'higher' : 'lower';
-            updateGameMessage(`Try a ${hint} number!`, 'info');
-        }
-
-        guessInput.value = '';
-        guessInput.focus();
-    });
+    guessBtn.addEventListener('click', makeGuess);
 
     guessInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            guessBtn.click();
-        }
+        if (e.key === 'Enter') makeGuess();
     });
 
     // Company Info Scraper Logic with Enhanced UI

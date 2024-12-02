@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Company Info & Games Hub</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <title>Company Info & Number Game</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <style>
         body {
@@ -13,7 +13,7 @@
             background: linear-gradient(135deg, #f6f8fc 0%, #e9edf5 100%);
             min-height: 100vh;
         }
-        .glass-effect {
+        .glass-card {
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.2);
@@ -40,110 +40,73 @@
             background: #4338CA;
             transform: translateY(-1px);
         }
-        .leaderboard-card {
-            background: linear-gradient(135deg, #ffffff 0%, #f8f9ff 100%);
+        .leaderboard-table {
+            min-w-full divide-y divide-gray-200
         }
     </style>
 </head>
-<body class="p-4 md:p-8">
-    <div class="max-w-6xl mx-auto">
-        <!-- Header -->
-        <div class="text-center mb-8">
-            <h1 class="text-4xl font-bold text-gray-900 mb-2">Company Info & Games Hub</h1>
-            <p class="text-gray-600">Search company information and enjoy our number guessing game!</p>
-        </div>
-
-        <!-- Tabs -->
-        <div class="glass-effect rounded-xl p-6 mb-8 shadow-lg">
-            <div class="flex space-x-4 mb-6">
-                <button data-tab="scraper" class="tab-btn active flex-1 py-3 px-6 rounded-lg font-semibold transition-all">
-                    🏢 Company Scraper
-                </button>
-                <button data-tab="game" class="tab-btn flex-1 py-3 px-6 rounded-lg font-semibold transition-all">
-                    🎮 Number Game
-                </button>
+<body class="bg-gray-50">
+    <div class="container mx-auto px-4 py-8">
+        <div class="glass-card p-8 mb-8">
+            <div class="flex justify-center space-x-4 mb-8">
+                <button class="tab-btn active px-6 py-3 rounded-lg font-medium" onclick="switchTab('search')">Company Search</button>
+                <button class="tab-btn px-6 py-3 rounded-lg font-medium" onclick="switchTab('game')">Number Game</button>
             </div>
 
-            <!-- Scraper Content -->
-            <div id="scraper-content" class="tab-content active">
-                <div class="space-y-6">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-2">Enter Company Names</label>
-                        <textarea id="companies" rows="4" class="game-input w-full rounded-lg p-3 text-gray-700" placeholder="Enter company names (one per line)"></textarea>
+            <!-- Search Tab -->
+            <div id="search" class="tab-content active">
+                <div class="max-w-2xl mx-auto">
+                    <h2 class="text-3xl font-semibold text-gray-800 mb-6 text-center">Company Information Search</h2>
+                    <div class="mb-6">
+                        <input type="text" id="searchInput" placeholder="Enter company name..." 
+                               class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
                     </div>
-                    <button id="searchBtn" class="btn-primary text-white px-6 py-3 rounded-lg font-semibold w-full md:w-auto">
-                        Search Companies
-                    </button>
-                    
-                    <div id="loading" class="hidden">
-                        <div class="animate-pulse flex space-x-4 items-center justify-center">
-                            <div class="h-3 w-3 bg-indigo-500 rounded-full animate-bounce"></div>
-                            <div class="h-3 w-3 bg-indigo-500 rounded-full animate-bounce delay-100"></div>
-                            <div class="h-3 w-3 bg-indigo-500 rounded-full animate-bounce delay-200"></div>
-                        </div>
+                    <div class="text-center">
+                        <button onclick="searchCompany()" class="px-8 py-3 rounded-lg font-medium">
+                            Search
+                        </button>
                     </div>
-
-                    <div id="resultsTable" class="hidden overflow-x-auto">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Company</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employees</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Website</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sources</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
-                                </tr>
-                            </thead>
-                            <tbody id="resultsTableBody" class="bg-white divide-y divide-gray-200"></tbody>
-                        </table>
-                    </div>
+                    <div id="loading" class="loading hidden"></div>
+                    <div id="results" class="results-grid mt-8"></div>
                 </div>
             </div>
 
-            <!-- Game Content -->
-            <div id="game-content" class="tab-content hidden">
-                <div class="max-w-2xl mx-auto space-y-8">
-                    <div class="text-center space-y-4">
-                        <h2 class="text-2xl font-bold text-gray-900">Number Guessing Game</h2>
-                        <p class="text-gray-600">Try to guess the number between 1 and 100!</p>
-                        
-                        <div class="flex space-x-4">
-                            <input type="number" id="guessInput" min="1" max="100" 
-                                   class="game-input flex-1 rounded-lg px-4 py-3 text-gray-700" 
-                                   placeholder="Enter your guess">
-                            <button id="guessBtn" class="btn-primary text-white px-6 py-3 rounded-lg font-semibold">
-                                Guess
-                            </button>
-                            <button id="newGameBtn" class="bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-lg font-semibold transition-all">
-                                New Game
-                            </button>
-                        </div>
+            <!-- Game Tab -->
+            <div id="game" class="tab-content">
+                <div class="game-container">
+                    <h2 class="text-3xl font-semibold text-gray-800 mb-6 text-center">Number Guessing Game</h2>
+                    <div class="text-center mb-8">
+                        <p class="text-gray-600 mb-4">Guess a number between 1 and 100</p>
+                        <input type="number" id="guessInput" min="1" max="100" class="game-input">
+                        <button onclick="makeGuess()" class="mt-4 px-8 py-3 rounded-lg font-medium">
+                            Guess
+                        </button>
                     </div>
-
-                    <div id="gameMessage" class="hidden rounded-lg p-4 text-center font-medium"></div>
+                    <div id="message" class="game-message"></div>
+                    <div id="gameOver" class="hidden text-center mt-8">
+                        <h3 class="text-2xl font-semibold mb-4">Game Over!</h3>
+                        <input type="text" id="nameInput" placeholder="Enter your name" 
+                               class="px-4 py-2 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <button onclick="submitScore()" class="mt-4 px-6 py-2 rounded-lg font-medium">
+                            Submit Score
+                        </button>
+                    </div>
                     
-                    <div id="previousGuesses" class="space-y-3">
-                        <h3 class="font-semibold text-gray-700">Previous Guesses:</h3>
-                        <div id="guessList" class="flex flex-wrap gap-2"></div>
-                    </div>
-
                     <!-- Leaderboard -->
-                    <div class="leaderboard-card rounded-xl p-6 shadow-lg space-y-4">
-                        <h2 class="text-xl font-bold flex items-center space-x-2">
-                            <span>🏆</span>
-                            <span>Leaderboard Champions</span>
-                        </h2>
-                        <div class="overflow-hidden rounded-lg">
-                            <table class="min-w-full">
-                                <thead class="bg-gray-50">
-                                    <tr>
-                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rank</th>
-                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Player</th>
-                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Guesses</th>
-                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                    <div class="mt-12">
+                        <h3 class="text-2xl font-semibold mb-4 text-center">Leaderboard</h3>
+                        <div class="overflow-x-auto">
+                            <table class="leaderboard-table">
+                                <thead>
+                                    <tr class="text-left">
+                                        <th class="px-6 py-3 text-gray-600">Rank</th>
+                                        <th class="px-6 py-3 text-gray-600">Name</th>
+                                        <th class="px-6 py-3 text-gray-600">Score</th>
                                     </tr>
                                 </thead>
-                                <tbody id="leaderboardBody" class="divide-y divide-gray-200"></tbody>
+                                <tbody id="leaderboard">
+                                    <!-- Leaderboard entries will be inserted here -->
+                                </tbody>
                             </table>
                         </div>
                     </div>
@@ -151,6 +114,10 @@
             </div>
         </div>
     </div>
+
+    <!-- Notification -->
+    <div id="notification" class="notification hidden"></div>
+
     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
