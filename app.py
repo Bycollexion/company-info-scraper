@@ -1,11 +1,10 @@
-from flask import Flask, request, jsonify, render_template, Response
+from flask import Flask, request, jsonify, render_template
 from bs4 import BeautifulSoup
 import requests
 import random
 import json
 import time
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote_plus
 import re
 import os
@@ -119,38 +118,71 @@ def search_company(company_name):
             'error': str(e)
         }
 
+# Load leaderboard from file or create empty one
+LEADERBOARD_FILE = 'leaderboard.json'
+try:
+    with open(LEADERBOARD_FILE, 'r') as f:
+        leaderboard = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    leaderboard = []
+
+@app.route('/submit_score', methods=['POST'])
+def submit_score():
+    data = request.get_json()
+    if not data or 'name' not in data or 'guesses' not in data:
+        return jsonify({'error': 'Invalid data'}), 400
+    
+    score = {
+        'name': data['name'],
+        'guesses': data['guesses'],
+        'date': time.strftime('%Y-%m-%d %H:%M')
+    }
+    
+    leaderboard.append(score)
+    leaderboard.sort(key=lambda x: x['guesses'])
+    
+    # Keep only top 10 scores
+    while len(leaderboard) > 10:
+        leaderboard.pop()
+    
+    # Save to file
+    with open(LEADERBOARD_FILE, 'w') as f:
+        json.dump(leaderboard, f)
+    
+    return jsonify({'success': True})
+
+@app.route('/leaderboard', methods=['GET'])
+def get_leaderboard():
+    return jsonify(leaderboard)
+
 @app.route('/')
 def index():
     return render_template('index.html')
 
 @app.route('/search', methods=['POST'])
 def search():
-    def generate():
-        companies = request.get_json().get('companies', [])
-        
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            future_to_company = {
-                executor.submit(search_company, company): company 
-                for company in companies
-            }
-            
-            for future in future_to_company:
-                try:
-                    result = future.result()
-                    yield f"data: {json.dumps(result)}\n\n"
-                    time.sleep(0.1)  # Small delay to prevent overwhelming the client
-                except Exception as e:
-                    error_result = {
-                        'company_name': future_to_company[future],
-                        'error': str(e)
-                    }
-                    yield f"data: {json.dumps(error_result)}\n\n"
+    if not request.is_json:
+        return jsonify({'error': 'Content-Type must be application/json'}), 400
+    
+    data = request.get_json()
+    companies = data.get('companies', []) if data else []
+    
+    if not companies:
+        return jsonify({'error': 'No companies provided'}), 400
 
-    return Response(generate(), mimetype='text/event-stream')
+    results = []
+    for company in companies:
+        try:
+            result = search_company(company)
+            results.append(result)
+        except Exception as e:
+            results.append({
+                'company_name': company,
+                'error': str(e)
+            })
+    
+    return jsonify(results)
 
 if __name__ == '__main__':
-    # Use environment variable for port with a default of 5002
     port = int(os.environ.get('PORT', 5002))
-    # In production, don't use debug mode
-    debug = os.environ.get('FLASK_ENV') == 'development'
-    app.run(host='0.0.0.0', port=port, debug=debug)
+    app.run(host='0.0.0.0', port=port)
